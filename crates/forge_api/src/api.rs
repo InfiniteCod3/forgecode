@@ -161,6 +161,11 @@ pub trait API: Sync + Send {
     /// Gets the model for the specified agent
     async fn get_agent_model(&self, agent_id: AgentId) -> Option<ModelId>;
 
+    /// Gets the context window length (in tokens) for the model of the
+    /// currently active agent. Returns `None` if the model or its context
+    /// length is unavailable.
+    async fn get_context_length(&self) -> Option<u64>;
+
     /// Gets the commit configuration (provider and model for commit message
     /// generation).
     async fn get_commit_config(&self) -> anyhow::Result<Option<forge_domain::ModelConfig>>;

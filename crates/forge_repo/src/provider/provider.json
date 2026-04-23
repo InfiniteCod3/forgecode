@@ -3338,5 +3338,14 @@
     "url": "https://api.sylph.ai/v1/chat/completions",
     "models": "https://api.sylph.ai/v1/models",
     "auth_methods": ["api_key"]
+  },
+  {
+    "id": "nvidia",
+    "api_key_vars": "NVIDIA_API_KEY",
+    "url_param_vars": [],
+    "response_type": "OpenAI",
+    "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+    "models": "https://integrate.api.nvidia.com/v1/models",
+    "auth_methods": ["api_key"]
   }
 ]

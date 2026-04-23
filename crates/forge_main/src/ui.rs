@@ -23,7 +23,7 @@ use forge_domain::{
 };
 use forge_fs::ForgeFS;
 use forge_select::ForgeWidget;
-use forge_spinner::SpinnerManager;
+use forge_spinner::{SpinnerManager, SpinnerPhase};
 use forge_tracker::ToolCallPayload;
 use forge_walker::Walker;
 use futures::future;
@@ -38,7 +38,7 @@ use crate::conversation_selector::ConversationSelector;
 use crate::display_constants::{CommandType, headers, markers, status};
 use crate::editor::ReadLineError;
 use crate::error::UIError;
-use crate::info::Info;
+use crate::info::{create_progress_bar, Info};
 use crate::input::Console;
 use crate::model::{AppCommand, ForgeCommandManager};
 use crate::porcelain::Porcelain;
@@ -272,6 +272,14 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         if let Some(m) = model {
             forge_prompt.model(m);
         }
+        // Set reasoning effort from config
+        if let Some(effort) = self.api.get_reasoning_effort().await.ok().flatten() {
+            forge_prompt.reasoning_effort(effort);
+        }
+        // Set context length for utilization coloring
+        if let Some(ctx_len) = self.api.get_context_length().await {
+            forge_prompt.context_length(ctx_len);
+        }
         self.console.prompt(&mut forge_prompt).await
     }
 
@@ -317,6 +325,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         let input = self.cli.prompt.clone().or(self.cli.piped_input.clone());
         if let Some(input) = input {
             tracker::prompt(input.clone());
+            self.spinner.set_phase(SpinnerPhase::Thinking);
             self.spinner.start(None)?;
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
@@ -3923,6 +3932,10 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
                 writer.finish()?;
 
+                // Switch to tool execution phase
+                self.spinner.set_phase(SpinnerPhase::ToolExecution);
+                self.spinner.increment_tool_count()?;
+
                 // Stop spinner only for tools that require stdout/stderr access
                 if tool_call.requires_stdout() {
                     self.spinner.stop(None)?;
@@ -3946,10 +3959,20 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 };
                 tracker::tool_call(payload);
 
-                self.spinner.start(None)?;
-                if !self.cli.verbose {
-                    return Ok(());
+                // Show tool completion marker in verbose mode
+                if self.cli.verbose {
+                    writer.finish()?;
+                    let status = if toolcall_result.is_error() {
+                        "✗".to_string().red().to_string()
+                    } else {
+                        "✓".to_string().green().to_string()
+                    };
+                    self.writeln(format!("  {status} {}", toolcall_result.name.to_string().dimmed()))?;
                 }
+
+                // Switch back to thinking phase after tool execution
+                self.spinner.set_phase(SpinnerPhase::Thinking);
+                self.spinner.start(None)?;
             }
             ChatResponse::RetryAttempt { cause, duration: _ } => {
                 if !self
@@ -3989,10 +4012,19 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             ChatResponse::TaskComplete => {
                 writer.finish()?;
-                if let Some(conversation_id) = self.state.conversation_id {
+                let conversation_id = self.state.conversation_id;
+                if let Some(conversation_id) = conversation_id {
                     self.writeln_title(
-                        TitleFormat::debug("Finished").sub_title(conversation_id.into_string()),
+                        TitleFormat::completion("Finished")
+                            .sub_title(conversation_id.into_string()),
                     )?;
+                    // Show completion summary with key metrics
+                    let api = self.api.clone();
+                    let conv = api.conversation(&conversation_id).await.ok().flatten();
+                    if let Some(conv) = conv {
+                        let summary = Info::new().add_title("Summary".to_string()).extend(&conv);
+                        self.writeln(summary)?;
+                    }
                 }
                 if let Some(format) = self.config.auto_dump.clone() {
                     let html = matches!(format, forge_config::AutoDumpFormat::Html);
@@ -4163,6 +4195,21 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
         if let Ok(Some(user_usage)) = self.api.user_usage().await {
             info = info.extend(Info::from(&user_usage));
+        }
+
+        // Add context utilization bar if we have usage and context length
+        if let Some(usage) = conversation_usage {
+            if let Some(context_length) = self.api.get_context_length().await {
+                let total = *usage.total_tokens as u64;
+                if context_length > 0 && total > 0 {
+                    let bar = create_progress_bar(total as u32, context_length as u32, 20);
+                    let percentage = (total * 100) / context_length;
+                    info = info.add_key_value(
+                        "Context Utilization",
+                        format!("{bar} {percentage}%"),
+                    );
+                }
+            }
         }
 
         self.writeln(info)?;

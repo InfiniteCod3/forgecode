@@ -206,19 +206,27 @@ impl Info {
     /// # Incorrect Usage
     ///
     /// ```rust,ignore
-    /// // ❌ Wrong: lowercase key
-    /// .add_key_value("model", "gpt-4")
-    ///
     /// // ❌ Wrong: raw string instead of constant
     /// .add_key_value("Status", "[enabled]")
     ///
     /// // ✅ Correct: Title Case key with constant
     /// .add_key_value("Status", status::ENABLED)
     /// ```
+    ///
+    /// Keys are automatically normalized to Title Case regardless of input casing.
     pub fn add_key_value(self, key: impl ToString, value: impl IntoInfoValue) -> Self {
         let key_str = key.to_string();
-        let normalized_key = key_str.to_lowercase();
+        // Normalize key to Title Case for consistent display
+        let normalized_key = normalize_key_case(&key_str);
         self.add_item(Some(normalized_key), value)
+    }
+
+    /// Adds a key-value pair without normalizing the key casing.
+    ///
+    /// Use this for keys that should preserve their original casing
+    /// (e.g., filenames, command names, identifiers).
+    pub(crate) fn add_raw_key_value(self, key: impl ToString, value: impl IntoInfoValue) -> Self {
+        self.add_item(Some(key.to_string()), value)
     }
 
     fn add_item(mut self, key: Option<impl ToString>, value: impl IntoInfoValue) -> Self {
@@ -448,18 +456,18 @@ impl From<&Metrics> for Info {
                     .unwrap_or(path);
 
                 let removed = if file_metrics.lines_removed == 0 {
-                    "0".to_string()
+                    "0".dimmed().to_string()
                 } else {
-                    format!("−{}", file_metrics.lines_removed)
+                    format!("−{}", file_metrics.lines_removed).red().to_string()
                 };
                 let added = if file_metrics.lines_added == 0 {
-                    "0".to_string()
+                    "0".dimmed().to_string()
                 } else {
-                    format!("+{}", file_metrics.lines_added)
+                    format!("+{}", file_metrics.lines_added).green().to_string()
                 };
-                let changes = format!("{} {}", removed, added);
+                let changes = format!("{removed} {added}");
 
-                info = info.add_key_value(filename, changes);
+                info = info.add_raw_key_value(filename, changes);
             }
         }
 
@@ -472,46 +480,85 @@ impl From<&Usage> for Info {
         let cache_percentage = calculate_cache_percentage(value);
         let cached_display = if cache_percentage > 0 {
             format!(
-                "{} [{}%]",
-                value.cached_tokens.to_formatted_string(&Locale::en),
-                cache_percentage
+                "{} [{}]",
+                value.cached_tokens.to_formatted_string(&Locale::en).cyan(),
+                format!("{cache_percentage}%").bright_cyan()
             )
         } else {
-            value.cached_tokens.to_formatted_string(&Locale::en)
+            value.cached_tokens.to_formatted_string(&Locale::en).cyan().to_string()
         };
 
         let mut usage_info = Info::new()
             .add_title("TOKEN USAGE")
             .add_key_value(
                 "Input Tokens",
-                value.prompt_tokens.to_formatted_string(&Locale::en),
+                value.prompt_tokens.to_formatted_string(&Locale::en).cyan().to_string(),
             )
             .add_key_value("Cached Tokens", cached_display)
             .add_key_value(
                 "Output Tokens",
-                value.completion_tokens.to_formatted_string(&Locale::en),
+                value.completion_tokens.to_formatted_string(&Locale::en).cyan().to_string(),
             );
 
         if let Some(cost) = value.cost.as_ref() {
-            usage_info = usage_info.add_key_value("Cost", format!("${cost:.4}"));
+            usage_info = usage_info.add_key_value("Cost", format!("{}", format!("${cost:.4}").green()));
         }
+
+        // Add cache utilization progress bar
+        if cache_percentage > 0 {
+            let bar = create_progress_bar(
+                *value.cached_tokens as u32,
+                *value.prompt_tokens as u32,
+                20,
+            );
+            usage_info = usage_info.add_key_value("Cache Hit Rate", bar);
+        }
+
         usage_info
     }
 }
-
 fn calculate_cache_percentage(usage: &Usage) -> u8 {
     let total = *usage.prompt_tokens; // Use prompt tokens as the base for cache percentage
     let cached = *usage.cached_tokens;
     (cached * 100).checked_div(total).unwrap_or(0) as u8
 }
 
+/// Normalizes a key string to Title Case.
+///
+/// Converts "input tokens" to "Input Tokens", "VERSION" to "Version",
+/// and preserves special tokens like "<CTRL+C>".
+fn normalize_key_case(key: &str) -> String {
+    key.split_whitespace()
+        .map(|word| {
+            // Preserve special tokens like <CTRL+C> as-is
+            if word.starts_with('<') {
+                return word.to_string();
+            }
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    let rest: String = chars.as_str().to_lowercase();
+                    format!("{}{}", first.to_uppercase(), rest)
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl fmt::Display for Info {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut width: Option<usize> = None;
+        let mut first_section = true;
 
         for (i, section) in self.sections.iter().enumerate() {
             match section {
                 Section::Title(title) => {
+                    if !first_section {
+                        writeln!(f, "{}", "─".dimmed())?;
+                    }
+                    first_section = false;
                     writeln!(f)?;
                     writeln!(f, "{}", title.bold().dimmed())?;
 
@@ -937,6 +984,10 @@ mod tests {
         let actual = super::Info::from(&fixture);
         let expected_display = actual.to_string();
 
+        // Strip ANSI codes for easier assertion (values are colorized)
+        let stripped = strip_ansi_escapes::strip(&expected_display);
+        let expected_display = String::from_utf8(stripped).unwrap();
+
         // Verify it contains the task completed section
         assert!(expected_display.contains("TASK COMPLETED"));
 
@@ -1108,7 +1159,7 @@ mod tests {
 
         let section_one_items: Vec<&str> = lines[section_one_start + 1..section_two_start]
             .iter()
-            .filter(|l| !l.trim().is_empty() && !l.contains("SECTION"))
+            .filter(|l| !l.trim().is_empty() && !l.contains("SECTION") && !l.contains("─"))
             .copied()
             .collect();
 
@@ -1128,7 +1179,7 @@ mod tests {
         // Check SECTION TWO items
         let section_two_items: Vec<&str> = lines[section_two_start + 1..]
             .iter()
-            .filter(|l| !l.trim().is_empty() && !l.contains("SECTION"))
+            .filter(|l| !l.trim().is_empty() && !l.contains("SECTION") && !l.contains("─"))
             .copied()
             .collect();
 
@@ -1152,7 +1203,8 @@ mod tests {
     }
 
     #[test]
-    fn test_add_key_value_normalizes_to_lowercase() {
+    #[test]
+    fn test_add_key_value_normalizes_to_title_case() {
         let info = super::Info::new()
             .add_key_value("VERSION", "1.0.0")
             .add_key_value("Working Directory", "/home/user")
@@ -1160,23 +1212,20 @@ mod tests {
 
         let display = info.to_string();
 
-        // All keys should be lowercase - checking just the key part without exact
-        // formatting
-        assert!(display.contains("version"));
-        assert!(display.contains("working directory"));
-        assert!(display.contains("mixed case key"));
+        // All keys should be normalized to Title Case
+        assert!(display.contains("Version"));
+        assert!(display.contains("Working Directory"));
+        assert!(display.contains("Mixed Case Key"));
 
         // Values should be preserved
         assert!(display.contains("1.0.0"));
         assert!(display.contains("/home/user"));
         assert!(display.contains("value"));
 
-        // Should not contain uppercase versions
+        // Should not contain ALL CAPS or all lowercase versions
         assert!(!display.contains("VERSION"));
-        assert!(!display.contains("Working Directory"));
         assert!(!display.contains("Mixed CASE Key"));
     }
-
     #[test]
     fn test_info_from_command_manager() {
         let command_manager = super::ForgeCommandManager::default();
@@ -1186,21 +1235,21 @@ mod tests {
         // Verify compile-time detection works correctly
         #[cfg(target_os = "macos")]
         {
-            assert!(display.contains("<opt+enter>"));
-            assert!(!display.contains("<alt+enter>"));
+            assert!(display.contains("<OPT+ENTER>"));
+            assert!(!display.contains("<ALT+ENTER>"));
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            assert!(display.contains("<alt+enter>"));
-            assert!(!display.contains("<opt+enter>"));
+            assert!(display.contains("<ALT+ENTER>"));
+            assert!(!display.contains("<OPT+ENTER>"));
         }
 
         // Should contain standard sections
         assert!(display.contains("COMMANDS"));
         assert!(display.contains("KEYBOARD SHORTCUTS"));
-        assert!(display.contains("<ctrl+c>"));
-        assert!(display.contains("<ctrl+d>"));
+        assert!(display.contains("<CTRL+C>"));
+        assert!(display.contains("<CTRL+D>"));
     }
 
     #[test]
@@ -1231,6 +1280,10 @@ mod tests {
 
         let actual = super::Info::from(&fixture);
         let expected_display = actual.to_string();
+
+        // Strip ANSI codes for easier assertion (values are colorized)
+        let stripped = strip_ansi_escapes::strip(&expected_display);
+        let expected_display = String::from_utf8(stripped).unwrap();
 
         // Verify it contains the task completed section
         assert!(expected_display.contains("TASK COMPLETED"));

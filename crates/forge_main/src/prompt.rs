@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use convert_case::{Case, Casing};
 use derive_setters::Setters;
 use forge_api::{AgentId, ModelId, Usage};
+use forge_domain::Effort;
 use nu_ansi_term::{Color, Style};
 use reedline::{Prompt, PromptHistorySearchStatus};
 
@@ -29,9 +30,12 @@ const MODEL_SYMBOL: &str = "\u{ec19}";
 pub struct ForgePrompt {
     pub cwd: PathBuf,
     pub usage: Option<Usage>,
+    pub prev_usage: Option<Usage>,
     pub agent_id: AgentId,
     pub model: Option<ModelId>,
     pub git_branch: Option<String>,
+    pub reasoning_effort: Option<Effort>,
+    pub context_length: Option<u64>,
 }
 
 impl ForgePrompt {
@@ -39,13 +43,65 @@ impl ForgePrompt {
     /// construction time.
     pub fn new(cwd: PathBuf, agent_id: AgentId) -> Self {
         let git_branch = get_git_branch();
-        Self { cwd, usage: None, agent_id, model: None, git_branch }
+        Self { cwd, usage: None, prev_usage: None, agent_id, model: None, git_branch, reasoning_effort: None, context_length: None }
     }
 
     pub fn refresh(&mut self) -> &mut Self {
         let git_branch = get_git_branch();
         self.git_branch = git_branch;
         self
+    }
+
+    /// Computes a human-readable token delta indicator string.
+    ///
+    /// Compares current usage to previous usage and returns a formatted
+    /// delta string like "▲1.2k" (increase) or "▼800" (decrease).
+    /// Returns an empty string if there's no previous usage to compare against.
+    fn compute_token_delta(&self) -> String {
+        match (self.usage.as_ref(), self.prev_usage.as_ref()) {
+            (Some(current), Some(prev)) => {
+                let current_total: usize = *current.total_tokens;
+                let prev_total: usize = *prev.total_tokens;
+                if prev_total == 0 {
+                    return String::new();
+                }
+                let delta = current_total as i64 - prev_total as i64;
+                if delta == 0 {
+                    return String::new();
+                }
+                if delta > 0 {
+                    format!("▲{}", humanize_number(delta as usize))
+                } else {
+                    format!("▼{}", humanize_number((-delta) as usize))
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Returns a color based on context window utilization.
+    ///
+    /// - Green when utilization < 50%
+    /// - Yellow when utilization is 50-75%
+    /// - LightRed when utilization is 75-90%
+    /// - Red when utilization > 90%
+    /// Falls back to LightGray when context length is unknown.
+    fn context_utilization_color(&self, total_tokens: usize) -> Color {
+        match self.context_length {
+            Some(limit) if limit > 0 => {
+                let utilization = total_tokens as f64 / limit as f64;
+                if utilization > 0.90 {
+                    Color::Red
+                } else if utilization > 0.75 {
+                    Color::LightRed
+                } else if utilization > 0.50 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                }
+            }
+            _ => Color::LightGray,
+        }
     }
 }
 
@@ -103,7 +159,7 @@ impl Prompt for ForgePrompt {
     }
 
     fn render_prompt_right(&self) -> Cow<'_, str> {
-        // Right prompt layout: agent · tokens · cost · model
+        // Right prompt layout: agent · tokens [±delta] · cost · model · effort
         // Active (tokens > 0): bright white for agent/tokens, green for cost
         // Inactive (no tokens): all segments dimmed
 
@@ -115,7 +171,7 @@ impl Prompt for ForgePrompt {
         } else {
             Color::DarkGray
         };
-        let mut result = String::with_capacity(64);
+        let mut result = String::with_capacity(128);
 
         // Agent name with nerd font symbol
         let agent_str = format!(
@@ -129,7 +185,8 @@ impl Prompt for ForgePrompt {
         )
         .unwrap();
 
-        // Token count (only shown when active)
+        // Token count with delta indicator (only shown when active)
+            // Token count with delta indicator (only shown when active)
         if let Some(tokens) = total_tokens
             && active
         {
@@ -138,14 +195,26 @@ impl Prompt for ForgePrompt {
                 forge_api::TokenCount::Approx(_) => "~",
             };
             let count_str = format!("{}{}", prefix, humanize_number(*tokens));
+
+            // Compute token delta from previous usage
+            let delta_str = self.compute_token_delta();
+
+            let token_display = if delta_str.is_empty() {
+                count_str
+            } else {
+                format!("{} {}", count_str, delta_str)
+            };
+
+            // Color-code token count based on context window utilization
+            let token_color = self.context_utilization_color(*tokens);
+
             write!(
                 result,
                 " {}",
-                Style::new().bold().fg(Color::LightGray).paint(&count_str)
+                Style::new().bold().fg(token_color).paint(&token_display)
             )
             .unwrap();
         }
-
         // Cost (only shown when active)
         if let Some(cost) = self.usage.as_ref().and_then(|u| u.cost)
             && active
@@ -170,6 +239,24 @@ impl Prompt for ForgePrompt {
                 Color::DarkGray
             };
             write!(result, " {}", Style::new().fg(color).paint(&model_label)).unwrap();
+        }
+
+        // Reasoning effort indicator (shown when active)
+        if let Some(effort) = self.reasoning_effort.as_ref()
+            && active
+            && !matches!(effort, Effort::None)
+        {
+            let effort_label = effort.to_string().to_uppercase();
+            let color = match effort {
+                Effort::XHigh => Color::Red,
+                Effort::High => Color::LightRed,
+                Effort::Medium => Color::Yellow,
+                Effort::Low => Color::Green,
+                Effort::Minimal => Color::Cyan,
+                Effort::None => Color::DarkGray,
+                Effort::Max => Color::Magenta,
+            };
+            write!(result, " {}", Style::new().bold().fg(color).paint(&effort_label)).unwrap();
         }
 
         Cow::Owned(result)
@@ -229,9 +316,12 @@ mod tests {
             ForgePrompt {
                 cwd: PathBuf::from("."),
                 usage: None,
+                prev_usage: None,
                 agent_id: AgentId::default(),
                 model: None,
                 git_branch: None,
+                reasoning_effort: None,
+                context_length: None,
             }
         }
     }

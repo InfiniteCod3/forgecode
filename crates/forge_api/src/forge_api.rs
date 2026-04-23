@@ -297,6 +297,15 @@ impl<
         agent_provider_resolver.get_model(Some(agent_id)).await.ok()
     }
 
+    async fn get_context_length(&self) -> Option<u64> {
+        let agent_id = self.get_active_agent().await?;
+        let agent_provider_resolver = AgentProviderResolver::new(self.services.clone());
+        let provider = agent_provider_resolver.get_provider(Some(agent_id.clone())).await.ok()?;
+        let model_id = agent_provider_resolver.get_model(Some(agent_id)).await.ok()?;
+        let models = self.services.models(provider).await.ok()?;
+        models.iter().find(|m| m.id == model_id).and_then(|m| m.context_length)
+    }
+
     async fn reload_mcp(&self) -> Result<()> {
         self.services.mcp_service().reload_mcp().await
     }

@@ -13,6 +13,7 @@ use super::minimax::SetMinimaxParams;
 use super::normalize_tool_schema::{
     EnforceStrictResponseFormatSchema, EnforceStrictToolSchema, NormalizeToolSchema,
 };
+use super::nvidia::SetNvidiaParams;
 use super::set_cache::SetCache;
 use super::set_reasoning_effort::SetReasoningEffort;
 use super::strip_thought_signature::StripThoughtSignature;
@@ -71,7 +72,7 @@ impl Transformer for ProviderPipeline<'_> {
         let cerebras_compat = MakeCerebrasCompat.when(move |_| provider.id == ProviderId::CEREBRAS);
 
         let xai_compat = MakeXaiCompat.when(move |_| provider.id == ProviderId::XAI);
-
+        let nvidia_params = SetNvidiaParams.when(move |_| provider.id == ProviderId::NVIDIA);
         let trim_tool_call_ids = TrimToolCallIds.when(move |_| provider.id == ProviderId::OPENAI);
 
         let kimi_coding = ProviderId::from_str("kimi_coding").unwrap();
@@ -94,6 +95,7 @@ impl Transformer for ProviderPipeline<'_> {
             .pipe(kimi_k2_reasoning)
             .pipe(cerebras_compat)
             .pipe(xai_compat)
+            .pipe(nvidia_params)
             .pipe(trim_tool_call_ids)
             .pipe(strict_schema)
             .pipe(NormalizeToolSchema);

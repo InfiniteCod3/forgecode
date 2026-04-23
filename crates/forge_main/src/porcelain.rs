@@ -737,28 +737,28 @@ mod tests {
         let expected = vec![
             vec![
                 Some("env".into()),
-                Some("version".into()),
+                Some("Version".into()),
                 Some("0.1.0".into()),
             ],
-            vec![Some("env".into()), Some("shell".into()), Some("zsh".into())],
+            vec![Some("env".into()), Some("Shell".into()), Some("zsh".into())],
             vec![
                 Some("conversation".into()),
-                Some("id".into()),
+                Some("Id".into()),
                 Some("000-000-000".into()),
             ],
             vec![
                 Some("conversation".into()),
-                Some("title".into()),
+                Some("Title".into()),
                 Some("make agents great again".into()),
             ],
             vec![
                 Some("agent".into()),
-                Some("id".into()),
+                Some("Id".into()),
                 Some("forge".into()),
             ],
             vec![
                 Some("agent".into()),
-                Some("model".into()),
+                Some("Model".into()),
                 Some("sonnet-4".into()),
             ],
         ];

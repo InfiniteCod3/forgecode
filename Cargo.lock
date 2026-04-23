@@ -2493,7 +2493,6 @@ dependencies = [
  "forge_domain",
  "indicatif",
  "pretty_assertions",
- "rand 0.10.1",
  "tokio",
 ]
 

@@ -6,6 +6,7 @@ use colored::Colorize;
 use forge_domain::ConsoleWriter;
 use forge_markdown_stream::StreamdownRenderer;
 use forge_spinner::SpinnerManager;
+use forge_spinner::SpinnerPhase;
 
 /// Shared spinner wrapper that encapsulates locking for thread-safe spinner
 /// operations.
@@ -61,6 +62,16 @@ impl<P: ConsoleWriter> SharedSpinner<P> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .ewrite_ln(message)
+    }
+
+    /// Sets the current spinner phase for context-aware messages.
+    pub fn set_phase(&self, phase: SpinnerPhase) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).set_phase(phase)
+    }
+
+    /// Increments the tool counter and updates the spinner.
+    pub fn increment_tool_count(&self) -> Result<()> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).increment_tool_count()
     }
 }
 

@@ -24,26 +24,26 @@ impl TitleDisplay {
         let mut buf = String::new();
 
         let icon = match self.inner.category {
-            Category::Action => "●".yellow(),
-            Category::Info => "●".white(),
-            Category::Debug => "●".cyan(),
-            Category::Error => "●".red(),
-            Category::Completion => "●".yellow(),
-            Category::Warning => "⚠️".bright_yellow(),
+            Category::Action => "▶".yellow(),
+            Category::Info => "ℹ".white(),
+            Category::Debug => "┆".cyan(),
+            Category::Error => "✗".red(),
+            Category::Completion => "✓".green(),
+            Category::Warning => "⚠".bright_yellow(),
         };
 
         buf.push_str(format!("{icon} ").as_str());
 
         let local_time: chrono::DateTime<Local> = self.inner.timestamp.into();
-        let timestamp_str = format!("[{}] ", local_time.format("%H:%M:%S"));
+        let timestamp_str = format!("[{}] ", local_time.format("%H:%M"));
         buf.push_str(timestamp_str.dimmed().to_string().as_str());
 
         let title = match self.inner.category {
             Category::Action => self.inner.title.white(),
-            Category::Info => self.inner.title.white(),
+            Category::Info => self.inner.title.cyan(),
             Category::Debug => self.inner.title.dimmed(),
             Category::Error => format!("{} {}", "ERROR:".bold(), self.inner.title).red(),
-            Category::Completion => self.inner.title.white().bold(),
+            Category::Completion => self.inner.title.green().bold(),
             Category::Warning => {
                 format!("{} {}", "WARNING:".bold(), self.inner.title).bright_yellow()
             }
@@ -51,8 +51,19 @@ impl TitleDisplay {
 
         buf.push_str(title.to_string().as_str());
 
-        if let Some(ref sub_title) = self.inner.sub_title {
-            buf.push_str(&format!(" {}", sub_title.dimmed()).to_string());
+        let sub_title_colored = self.inner.sub_title.as_ref().map(|s| {
+            match self.inner.category {
+                Category::Action => s.yellow().dimmed().to_string(),
+                Category::Info => s.cyan().dimmed().to_string(),
+                Category::Debug => s.dimmed().to_string(),
+                Category::Error => s.red().dimmed().to_string(),
+                Category::Completion => s.green().dimmed().to_string(),
+                Category::Warning => s.bright_yellow().dimmed().to_string(),
+            }
+        });
+
+        if let Some(ref sub_title) = sub_title_colored {
+            buf.push_str(&format!(" {sub_title}"));
         }
 
         buf
@@ -61,10 +72,18 @@ impl TitleDisplay {
     fn format_plain(&self) -> String {
         let mut buf = String::new();
 
-        buf.push_str("● ");
+        let icon = match self.inner.category {
+            Category::Action => "▶",
+            Category::Info => "ℹ",
+            Category::Debug => "┆",
+            Category::Error => "✗",
+            Category::Completion => "✓",
+            Category::Warning => "⚠",
+        };
+        buf.push_str(format!("{icon} ").as_str());
 
         let local_time: chrono::DateTime<Local> = self.inner.timestamp.into();
-        let timestamp_str = format!("[{}] ", local_time.format("%H:%M:%S"));
+        let timestamp_str = format!("[{}] ", local_time.format("%H:%M"));
         buf.push_str(&timestamp_str);
 
         buf.push_str(&self.inner.title);

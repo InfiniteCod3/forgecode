@@ -209,6 +209,18 @@ pub struct ThinkingConfig {
     pub r#type: ThinkingType,
 }
 
+/// NVIDIA NIM-specific chat template kwargs
+///
+/// Used by models like z-ai/glm-5.1 on NVIDIA NIM to control thinking mode:
+/// `{"enable_thinking": true, "clear_thinking": false}`
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct ChatTemplateKwargs {
+    /// Whether to enable thinking/reasoning output
+    pub enable_thinking: Option<bool>,
+    /// Whether to clear thinking output from the final response
+    pub clear_thinking: Option<bool>,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Setters, Default)]
 #[setters(strip_option)]
 pub struct Request {
@@ -280,6 +292,12 @@ pub struct Request {
     pub max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<ThinkingConfig>,
+    /// NVIDIA NIM-specific chat template kwargs
+    ///
+    /// Used by models like z-ai/glm-5.1 on NVIDIA NIM to enable thinking mode:
+    /// `"chat_template_kwargs": {"enable_thinking": true, "clear_thinking": false}`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_template_kwargs: Option<ChatTemplateKwargs>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -409,6 +427,7 @@ impl From<Context> for Request {
             reasoning_effort: Default::default(),
             max_completion_tokens: Default::default(),
             thinking: Default::default(),
+            chat_template_kwargs: Default::default(),
         }
     }
 }

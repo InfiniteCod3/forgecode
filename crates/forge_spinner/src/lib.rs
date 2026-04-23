@@ -5,7 +5,6 @@ use anyhow::Result;
 use colored::Colorize;
 use forge_domain::ConsoleWriter;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
-use rand::RngExt;
 
 mod progress_bar;
 
@@ -51,9 +50,35 @@ fn format_elapsed_time(duration: Duration) -> String {
 pub struct SpinnerManager<P: ConsoleWriter> {
     spinner: Option<ProgressBar>,
     accumulated_elapsed: Duration,
-    word_index: Option<usize>,
+    phase: SpinnerPhase,
+    tool_count: usize,
     message: Option<String>,
     printer: Arc<P>,
+}
+
+/// Phase-aware spinner message selection.
+///
+/// Instead of random words, the spinner shows contextually appropriate
+/// messages based on the current phase of the conversation cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpinnerPhase {
+    /// Initial startup / connecting to provider
+    Connecting,
+    /// Agent is thinking / reasoning
+    Thinking,
+    /// Agent is executing a tool
+    ToolExecution,
+}
+
+impl SpinnerPhase {
+    /// Returns a phase-appropriate word for the spinner.
+    fn word(&self) -> &'static str {
+        match self {
+            SpinnerPhase::Connecting => "Connecting",
+            SpinnerPhase::Thinking => "Thinking",
+            SpinnerPhase::ToolExecution => "Executing",
+        }
+    }
 }
 
 impl<P: ConsoleWriter> SpinnerManager<P> {
@@ -62,7 +87,8 @@ impl<P: ConsoleWriter> SpinnerManager<P> {
         Self {
             spinner: None,
             accumulated_elapsed: Duration::ZERO,
-            word_index: None,
+            phase: SpinnerPhase::Thinking,
+            tool_count: 0,
             message: None,
             printer,
         }
@@ -72,25 +98,15 @@ impl<P: ConsoleWriter> SpinnerManager<P> {
     pub fn start(&mut self, message: Option<&str>) -> Result<()> {
         self.stop(None)?;
 
-        let words = [
-            "Thinking",
-            "Processing",
-            "Analyzing",
-            "Forging",
-            "Researching",
-            "Synthesizing",
-            "Reasoning",
-            "Contemplating",
-        ];
-
-        // Use a random word from the list, caching the index for consistency
         let word = match message {
             Some(msg) => msg.to_string(),
             None => {
-                let idx = *self
-                    .word_index
-                    .get_or_insert_with(|| rand::rng().random_range(0..words.len()));
-                words.get(idx).unwrap_or(&"Loading").to_string()
+                let phase_word = self.phase.word().to_string();
+                if self.tool_count > 0 && self.phase == SpinnerPhase::ToolExecution {
+                    format!("{} ({}/{})", phase_word, self.tool_count, self.tool_count)
+                } else {
+                    phase_word
+                }
             }
         };
 
@@ -159,11 +175,33 @@ impl<P: ConsoleWriter> SpinnerManager<P> {
         Ok(())
     }
 
-    /// Resets the elapsed time to zero.
+    /// Sets the current spinner phase for context-aware messages.
+    pub fn set_phase(&mut self, phase: SpinnerPhase) {
+        self.phase = phase;
+    }
+
+    /// Increments the tool counter and updates the spinner if active.
+    pub fn increment_tool_count(&mut self) -> Result<()> {
+        self.tool_count += 1;
+        // If spinner is active with no custom message, update to show tool count
+        if self.spinner.is_some() && self.message.is_none() {
+            let msg = format!(
+                "{} ({}/{})",
+                self.phase.word(),
+                self.tool_count,
+                self.tool_count
+            );
+            self.set_message(&msg)?;
+        }
+        Ok(())
+    }
+
+    /// Resets the elapsed time and phase to zero/defaults.
     /// Call this when starting a completely new task/conversation.
     pub fn reset(&mut self) {
         self.accumulated_elapsed = Duration::ZERO;
-        self.word_index = None;
+        self.phase = SpinnerPhase::Thinking;
+        self.tool_count = 0;
         self.message = None;
     }
 
@@ -271,17 +309,32 @@ mod tests {
     }
 
     #[test]
-    fn test_spinner_reset_clears_word_index() {
+    fn test_spinner_reset_clears_phase() {
         let mut fixture_spinner = fixture_spinner();
 
-        // Set a word index
-        fixture_spinner.word_index = Some(3);
+        // Set a phase
+        fixture_spinner.phase = super::SpinnerPhase::ToolExecution;
 
         // Reset should clear it
         fixture_spinner.reset();
 
-        let actual = fixture_spinner.word_index;
-        let expected = None;
+        let actual = fixture_spinner.phase;
+        let expected = super::SpinnerPhase::Thinking;
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_spinner_reset_clears_tool_count() {
+        let mut fixture_spinner = fixture_spinner();
+
+        // Set a tool count
+        fixture_spinner.tool_count = 5;
+
+        // Reset should clear it
+        fixture_spinner.reset();
+
+        let actual = fixture_spinner.tool_count;
+        let expected = 0;
         assert_eq!(actual, expected);
     }
 
@@ -300,21 +353,21 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    #[tokio::test]
-    async fn test_word_index_caching_behavior() {
+    #[test]
+    fn test_phase_is_preserved_across_starts() {
         let mut fixture_spinner = fixture_spinner();
 
-        // Start spinner without message multiple times
+        fixture_spinner.phase = super::SpinnerPhase::ToolExecution;
         fixture_spinner.start(None).unwrap();
-        let first_index = fixture_spinner.word_index;
+        let first_phase = fixture_spinner.phase;
         fixture_spinner.stop(None).unwrap();
 
         fixture_spinner.start(None).unwrap();
-        let second_index = fixture_spinner.word_index;
+        let second_phase = fixture_spinner.phase;
         fixture_spinner.stop(None).unwrap();
 
-        // Word index should be identical because it's cached
-        assert_eq!(first_index, second_index);
+        // Phase should be identical because it's preserved
+        assert_eq!(first_phase, second_phase);
     }
 
     #[test]

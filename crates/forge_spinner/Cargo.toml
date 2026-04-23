@@ -10,7 +10,6 @@ colored.workspace = true
 tokio.workspace = true
 forge_domain.workspace = true
 indicatif = "0.18.4"
-rand = "0.10.0"
 
 [dev-dependencies]
 pretty_assertions.workspace = true

@@ -76,6 +76,7 @@ impl ProviderId {
     pub const GOOGLE_AI_STUDIO: ProviderId = ProviderId(Cow::Borrowed("google_ai_studio"));
     pub const MODAL: ProviderId = ProviderId(Cow::Borrowed("modal"));
     pub const ADAL: ProviderId = ProviderId(Cow::Borrowed("adal"));
+    pub const NVIDIA: ProviderId = ProviderId(Cow::Borrowed("nvidia"));
 
     /// Returns all built-in provider IDs
     ///
@@ -112,6 +113,7 @@ impl ProviderId {
             ProviderId::GOOGLE_AI_STUDIO,
             ProviderId::MODAL,
             ProviderId::ADAL,
+            ProviderId::NVIDIA,
         ]
     }
 
@@ -142,6 +144,7 @@ impl ProviderId {
             "google_ai_studio" => "GoogleAIStudio".to_string(),
             "modal" => "Modal".to_string(),
             "adal" => "AdaL".to_string(),
+            "nvidia" => "NVIDIA".to_string(),
             _ => {
                 // For other providers, use UpperCamelCase conversion
                 use convert_case::{Case, Casing};
@@ -193,6 +196,7 @@ impl std::str::FromStr for ProviderId {
             "google_ai_studio" => ProviderId::GOOGLE_AI_STUDIO,
             "modal" => ProviderId::MODAL,
             "adal" => ProviderId::ADAL,
+            "nvidia" => ProviderId::NVIDIA,
             // For custom providers, use Cow::Owned to avoid memory leaks
             custom => ProviderId(Cow::Owned(custom.to_string())),
         };
@@ -641,6 +645,24 @@ mod tests {
     fn test_adal_in_built_in_providers() {
         let built_in = ProviderId::built_in_providers();
         assert!(built_in.contains(&ProviderId::ADAL));
+    }
+
+    #[test]
+    fn test_nvidia_from_str() {
+        let actual = ProviderId::from_str("nvidia").unwrap();
+        let expected = ProviderId::NVIDIA;
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_nvidia_display_name() {
+        assert_eq!(ProviderId::NVIDIA.to_string(), "NVIDIA");
+    }
+
+    #[test]
+    fn test_nvidia_in_built_in_providers() {
+        let built_in = ProviderId::built_in_providers();
+        assert!(built_in.contains(&ProviderId::NVIDIA));
     }
 
     #[test]

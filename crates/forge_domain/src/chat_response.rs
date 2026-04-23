@@ -208,6 +208,16 @@ impl TitleFormat {
             timestamp: Local::now().into(),
         }
     }
+
+    /// Create a status for task completion
+    pub fn completion(message: impl Into<String>) -> Self {
+        Self {
+            title: message.into(),
+            sub_title: None,
+            category: Category::Completion,
+            timestamp: Local::now().into(),
+        }
+    }
 }
 
 #[cfg(test)]
